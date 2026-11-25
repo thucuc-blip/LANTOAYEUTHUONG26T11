@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô phỏng 3D - Bài toán Cứu trợ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; }
+        
+        /* Bảng điều khiển nằm ở góc dưới bên trái, ôm sát nội dung */
+        #ui-panel {
+            position: absolute; bottom: 15px; left: 15px;
+            width: max-content; max-width: 92vw; background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px); border-radius: 12px;
+            box-shadow: 0 -5px 30px rgba(0,0,0,0.15); z-index: 100; border: 1px solid rgba(255,255,255,0.4);
+            max-height: calc(100vh - 30px); overflow-y: auto;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        
+        /* Kích cỡ chữ đã thu nhỏ còn một nửa (40px) */
+        .point-label {
+            position: absolute; font-size: 40px; font-weight: 900; pointer-events: none; z-index: 5;
+            transform: translate(15px, -25px);
+            text-shadow: -2px -2px 0 rgba(255,255,255,0.9), 2px -2px 0 rgba(255,255,255,0.9), -2px 2px 0 rgba(255,255,255,0.9), 2px 2px 0 rgba(255,255,255,0.9), 0px 0px 6px rgba(255,255,255,0.8);
+            white-space: nowrap; transition: color 0.2s, transform 0.2s;
+        }
+        
+        .legend-item { display: flex; align-items: center; margin-bottom: 2px; font-size: 11px; }
+        .legend-color { width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        
+        /* Chữ thả hàng thành công nhấp nháy vàng rực */
+        .success-text {
+            position: absolute; font-size: 32px; font-weight: 900; color: #ca8a04; background: #fef08a;
+            padding: 15px 30px; border-radius: 12px; border: 4px solid #eab308; pointer-events: none; z-index: 20;
+            transform: translate(-50%, -150%); box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center; white-space: nowrap;
+            animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards, pulseYellow 0.4s infinite 0.4s;
+        }
+        
+        @keyframes popIn { 0% { opacity: 0; transform: translate(-50%, -100%) scale(0.5); } 100% { opacity: 1; transform: translate(-50%, -150%) scale(1); } }
+        @keyframes pulseYellow { 
+            0%, 100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.8); border-color: #eab308; color: #ca8a04; background: #fef08a; transform: translate(-50%, -150%) scale(1); } 
+            50% { box-shadow: 0 0 0 25px rgba(234, 179, 8, 0); border-color: #facc15; color: #a16207; background: #fff; transform: translate(-50%, -150%) scale(1.1); } 
+        }
+        
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .vec { position: relative; display: inline-block; margin-top: 0.5em; }
+        .vec::after { content: '→'; position: absolute; top: -0.9em; left: 0; width: 100%; text-align: center; font-family: Arial, sans-serif; font-size: 0.9em; font-weight: normal; line-height: 1; }
+        
+        /* Nút thả hàng nhấp nháy đỏ rực */
+        @keyframes pulseRedButton {
+            0%, 100% { background-color: #ef4444 !important; box-shadow: 0 0 10px #ef4444; color: white !important;}
+            50% { background-color: #fca5a5 !important; box-shadow: 0 0 25px #ef4444; color: #991b1b !important;}
+        }
+        .blink-red-btn { animation: pulseRedButton 0.8s infinite !important; cursor: pointer !important; opacity: 1 !important;}
+
+        @media (max-width: 768px) { #ui-panel { bottom: 10px; left: 10px; width: max-content; max-width: calc(100% - 20px); max-height: 60vh; } }
+    </style>
+</head>
+<body>
+    <!-- UI Panel (Góc dưới bên trái, ôm sát nội dung) -->
+    <div id="ui-panel" class="p-2.5 shadow-xl">
+        <!-- Phần Tọa độ & Điều khiển -->
+        <div class="w-full flex flex-col gap-1.5">
+            <div>
+                <div class="grid grid-cols-2 gap-x-2 gap-y-1">
+                    <div class="legend-item"><div class="legend-color bg-gray-800"></div> O(0;0;0)</div>
+                    <div class="legend-item"><div class="legend-color bg-red-500"></div> A(2;3;5)</div>
+                    <div class="legend-item"><div class="legend-color bg-blue-500"></div> B(8;6;4)</div>
+                    <div class="legend-item"><div class="legend-color bg-orange-500"></div> C(4;4;7)</div>
+                </div>
+            </div>
+            
+            <!-- Các nút điều khiển chung -->
+            <div class="grid grid-cols-2 gap-1.5 mt-1">
+                <button id="btn-show-vectors" class="bg-blue-500 hover:bg-blue-600 text-white text-[11px] font-bold py-1.5 px-2 rounded transition shadow disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap" disabled>
+                    👁 HIỆN <span class="vec font-bold">AC</span>, <span class="vec font-bold">CD</span>
+                </button>
+                <button id="btn-drop-cargo" class="bg-yellow-400 hover:bg-yellow-500 text-slate-900 text-[11px] font-bold py-1.5 px-2 rounded transition shadow disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    🚁 THẢ HÀNG
+                </button>
+                <button id="btn-storm" class="bg-red-500 hover:bg-red-600 text-white text-[11px] font-bold py-1.5 px-2 rounded transition shadow border border-red-600" title="Bật/Tắt sấm chớp">
+                    ⛈ BẬT BÃO
+                </button>
+                <button id="btn-hide-models" class="bg-gray-600 hover:bg-gray-700 text-white text-[11px] font-bold py-1.5 px-2 rounded transition shadow">
+                    🙈 ẨN MÔ HÌNH
+                </button>
+                <button id="btn-replay" class="col-span-2 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold py-1.5 px-2 rounded transition shadow">
+                    🔄 CHƠI LẠI
+                </button>
+            </div>
+            <p class="text-[10px] text-slate-500 italic text-center">Chuột trái: Xoay | Chuột phải: Dịch | Cuộn: Zoom</p>
+        </div>
+        
+        <!-- Phần Trắc nghiệm -->
+        <div class="w-full bg-slate-50 p-2 rounded-lg border border-slate-200 shadow-inner flex flex-col gap-2 overflow-y-auto">
+            <div id="section-a">
+                <div class="space-y-1.5 text-slate-700 text-[11px] leading-relaxed">
+                    <div>+ Theo đề bài thì <span class="font-mono font-bold vec">CD</span> = <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a1"> <span class="font-mono font-bold vec">AC</span></div>
+                    <div>+ Gọi <span class="font-mono">D(x;y;z)</span>, khi đó:</div>
+                    <div class="pl-2"><span class="font-mono font-bold vec">CD</span> = ( <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a2"> ; <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a3"> ; <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a4"> )</div>
+                    <div class="pl-2"><span class="font-mono font-bold vec">AC</span> = ( <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a5"> ; <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a6"> ; <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a7"> )</div>
+                    
+                    <div>+ Vì <span class="font-mono font-bold vec">CD</span> = <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-a8"> <span class="font-mono font-bold vec">AC</span> nên ta có hệ phương trình:</div>
+                    <div class="flex items-center gap-1 pl-1 font-mono">
+                        <!-- Dấu ngoặc nhọn trái -->
+                        <svg class="w-2.5 self-stretch shrink-0 text-slate-700" viewBox="0 0 12 90" preserveAspectRatio="none" fill="none">
+                            <path d="M11 2 C5 2 6 8 6 15 L6 37 C6 42 4 45 1 45 C4 45 6 48 6 53 L6 75 C6 82 5 88 11 88" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center gap-1">
+                                <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s1">
+                                <span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s4">
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s5">
+                                <span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s8">
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <input type="text" class="w-9 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s9">
+                                <span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-s12">
+                            </div>
+                        </div>
+
+                        <span class="px-1 font-sans font-bold text-slate-600 text-xs">⇔</span>
+
+                        <!-- Dấu ngoặc nhọn phải -->
+                        <svg class="w-2.5 self-stretch shrink-0 text-slate-700" viewBox="0 0 12 90" preserveAspectRatio="none" fill="none">
+                            <path d="M11 2 C5 2 6 8 6 15 L6 37 C6 42 4 45 1 45 C4 45 6 48 6 53 L6 75 C6 82 5 88 11 88" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        <div class="flex flex-col gap-1">
+                            <div class="flex items-center gap-0.5">
+                                <span class="w-3 inline-block">x</span><span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-x">
+                            </div>
+                            <div class="flex items-center gap-0.5">
+                                <span class="w-3 inline-block">y</span><span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-y">
+                            </div>
+                            <div class="flex items-center gap-0.5">
+                                <span class="w-3 inline-block">z</span><span>=</span>
+                                <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-z">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-0.5">+ Vậy <span class="font-mono font-bold">D(</span> <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-d1"> ; <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-d2"> ; <input type="text" class="w-8 py-0.5 border border-gray-400 rounded text-center outline-none focus:border-blue-500 h-5" id="ans-d3"> <span class="font-mono font-bold">)</span></div>
+                </div>
+                <div class="flex justify-center mt-2">
+                    <button id="btn-submit-a" class="w-full bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold py-1.5 rounded transition shadow flex justify-center items-center gap-1">
+                        ❤️ Gửi Đáp Án
+                    </button>
+                </div>
+                <div id="check-result-a" class="mt-1.5 text-center font-bold text-[11px] p-1.5 rounded hidden"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="canvas-container"></div>
+    <div id="labels-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // TRỤC TỌA ĐỘ VÀ HỆ THỐNG CƠ BẢN
+        function mathToThree(x, y, z) { const scale = 2; return new THREE.Vector3(x * scale, z * scale, -y * scale); }
+
+        const container = document.getElementById('canvas-container');
+        const labelsContainer = document.getElementById('labels-container');
+        
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#79a9a8');
+        scene.fog = new THREE.FogExp2('#79a9a8', 0.015);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(35, 28, 45);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; controls.dampingFactor = 0.05; controls.target.copy(mathToThree(5, 5, 2));
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6); 
+        dirLight.position.set(20, 50, 20); dirLight.castShadow = true; scene.add(dirLight);
+
+        const origin = mathToThree(0,0,0);
+        function createThickAxis(mathEnd, colorHex) {
+            const endVec = mathToThree(mathEnd[0], mathEnd[1], mathEnd[2]);
+            const length = origin.distanceTo(endVec);
+            const dir = new THREE.Vector3().subVectors(endVec, origin).normalize();
+            const radius = 0.15, headRadius = 0.45, headLength = 1.5;
+            const shaftLength = length - headLength;
+            
+            const axisGroup = new THREE.Group();
+            const material = new THREE.MeshLambertMaterial({ color: colorHex });
+            
+            const shaftGeo = new THREE.CylinderGeometry(radius, radius, shaftLength, 12); shaftGeo.rotateX(Math.PI / 2);
+            const shaft = new THREE.Mesh(shaftGeo, material); shaft.position.z = shaftLength / 2; axisGroup.add(shaft);
+            
+            // Kéo dài thân trục về chiều âm
+            const tailLength = 60;
+            const tailGeo = new THREE.CylinderGeometry(radius, radius, tailLength, 12); tailGeo.rotateX(Math.PI / 2);
+            const tail = new THREE.Mesh(tailGeo, material); tail.position.z = -tailLength / 2; axisGroup.add(tail);
+            
+            const headGeo = new THREE.ConeGeometry(headRadius, headLength, 16); headGeo.rotateX(Math.PI / 2);
+            const head = new THREE.Mesh(headGeo, material); head.position.z = shaftLength + headLength / 2; axisGroup.add(head);
+            
+            axisGroup.position.copy(origin); axisGroup.lookAt(new THREE.Vector3().copy(origin).add(dir));
+            return axisGroup;
+        }
+
+        scene.add(createThickAxis([25, 0, 0], 0xff0000));
+        scene.add(createThickAxis([0, 25, 0], 0x00ff00));
+        scene.add(createThickAxis([0, 0, 20], 0x0000ff));
+
+        const tickMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+        window.axisLabelElements = []; 
+        function createAxisNumber(text, mathPos) {
+            const el = document.createElement('div'); el.innerText = text;
+            el.style.position = 'absolute'; el.style.fontSize = '12px'; el.style.fontWeight = '600';
+            el.style.color = '#334155'; el.style.pointerEvents = 'none'; el.style.zIndex = '5';
+            el.style.textShadow = '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff';
+            el.style.transform = 'translate(-50%, -50%)';
+            labelsContainer.appendChild(el);
+            window.axisLabelElements.push({ el: el, pos: mathToThree(mathPos[0], mathPos[1], mathPos[2]) });
+        }
+        
+        for (let i = -25; i <= 25; i++) {
+            if (i === 0) continue;
+            const tick = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.06), tickMat); tick.position.copy(mathToThree(i, 0, 0)); scene.add(tick);
+            createAxisNumber(i, [i, -0.7, 0]);
+        }
+        for (let i = -25; i <= 25; i++) {
+            if (i === 0) continue;
+            const tick = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.6, 0.06), tickMat); tick.position.copy(mathToThree(0, i, 0)); scene.add(tick);
+            createAxisNumber(i, [-0.7, i, 0]);
+        }
+        for (let i = -20; i <= 20; i++) {
+            if (i === 0) continue;
+            const tick = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.06, 0.06), tickMat); tick.position.copy(mathToThree(0, 0, i)); scene.add(tick);
+            createAxisNumber(i, [0, -0.7, i]);
+        }
+        
+        function createAxisLabel(text, mathPos, color) {
+            const el = document.createElement('div'); el.innerHTML = `<i><b>${text}</b></i>`;
+            el.style.position = 'absolute'; el.style.fontSize = '24px'; el.style.fontFamily = '"Times New Roman", Times, serif';
+            el.style.color = color; el.style.pointerEvents = 'none'; el.style.zIndex = '5';
+            el.style.textShadow = '-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0px 0px 6px rgba(255,255,255,0.8)';
+            el.style.transform = 'translate(-50%, -50%)';
+            labelsContainer.appendChild(el);
+            window.axisLabelElements.push({ el: el, pos: mathToThree(mathPos[0], mathPos[1], mathPos[2]) });
+        }
+        createAxisLabel('x', [26, 0, 0], '#dc2626');
+        createAxisLabel('y', [0, 26, 0], '#16a34a');
+        createAxisLabel('z', [0, 0, 21], '#2563eb');
+
+        const gridHelper = new THREE.GridHelper(100, 50, 0x94a3b8, 0xe2e8f0); 
+        gridHelper.position.set(0, 0, 0); 
+        scene.add(gridHelper);
+        
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.1, side: THREE.DoubleSide})); 
+        plane.rotation.x = Math.PI / 2; 
+        scene.add(plane);
+
+        // MÔ HÌNH TRỰC THĂNG
+        function createParkedHelicopter() {
+            const heliWrapper = new THREE.Group();
+            const heli = new THREE.Group();
+            
+            const bodyGeo = new THREE.SphereGeometry(0.45, 32, 16); bodyGeo.scale(1.4, 0.85, 0.75);
+            const body = new THREE.Mesh(bodyGeo, new THREE.MeshLambertMaterial({color: 0xffcc00})); body.position.y = 0.5; heli.add(body);
+            const tailGeo = new THREE.CylinderGeometry(0.06, 0.03, 1.2, 12); tailGeo.rotateZ(Math.PI / 2);
+            const tail = new THREE.Mesh(tailGeo, new THREE.MeshLambertMaterial({color: 0xffcc00})); tail.position.set(-0.9, 0.5, 0); heli.add(tail);
+            const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.04), new THREE.MeshLambertMaterial({color: 0xffcc00})); fin.position.set(-1.4, 0.6, 0); fin.rotation.z = -Math.PI / 6; heli.add(fin);
+            const windowGeo = new THREE.SphereGeometry(0.46, 16, 16, 0, Math.PI*2, 0, Math.PI/2.2); windowGeo.scale(1.35, 0.75, 0.65); windowGeo.rotateZ(-Math.PI / 4.5);
+            const windowMesh = new THREE.Mesh(windowGeo, new THREE.MeshLambertMaterial({color: 0x0ea5e9})); windowMesh.position.set(0.05, 0.5, 0); heli.add(windowMesh);
+            
+            const rotorGroup = new THREE.Group(); rotorGroup.name = "mainRotor";
+            const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.25), new THREE.MeshLambertMaterial({color: 0x334155})); mast.position.set(0.1, 0.9, 0); rotorGroup.add(mast);
+            const bladeMat = new THREE.MeshLambertMaterial({color: 0x1e293b});
+            const blades1 = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.02, 0.12), bladeMat); blades1.position.set(0.1, 1.02, 0); rotorGroup.add(blades1);
+            const blades2 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 3.2), bladeMat); blades2.position.set(0.1, 1.02, 0); rotorGroup.add(blades2);
+            heli.add(rotorGroup);
+
+            const skidMat = new THREE.MeshLambertMaterial({color: 0x0f172a});
+            const skidL = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4), skidMat); skidL.rotateZ(Math.PI/2); skidL.position.set(0, 0.05, 0.3); heli.add(skidL);
+            const skidR = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4), skidMat); skidR.rotateZ(Math.PI/2); skidR.position.set(0, 0.05, -0.3); heli.add(skidR);
+            const strutGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.3);
+            const strut1 = new THREE.Mesh(strutGeo, skidMat); strut1.position.set(0.3, 0.2, 0.22); strut1.rotateX(Math.PI/6); heli.add(strut1);
+            const strut2 = new THREE.Mesh(strutGeo, skidMat); strut2.position.set(-0.3, 0.2, 0.22); strut2.rotateX(Math.PI/6); heli.add(strut2);
+            const strut3 = new THREE.Mesh(strutGeo, skidMat); strut3.position.set(0.3, 0.2, -0.22); strut3.rotateX(-Math.PI/6); heli.add(strut3);
+            const strut4 = new THREE.Mesh(strutGeo, skidMat); strut4.position.set(-0.3, 0.2, -0.22); strut4.rotateX(-Math.PI/6); heli.add(strut4);
+            
+            heli.rotation.y = -Math.PI / 2;
+            heliWrapper.add(heli);
+
+            return heliWrapper;
+        }
+
+        const pointData = [
+            { id: 'O', coords: [0, 0, 0], color: 0x333333, showAlways: true },
+            { id: 'A', coords: [2, 3, 5], color: 0xef4444, showAlways: true },
+            { id: 'B', coords: [8, 6, 4], color: 0x3b82f6, showAlways: true },
+            { id: 'C', coords: [4, 4, 7], color: 0xf97316, showAlways: true },
+            { id: 'D', coords: [8, 6, 11], color: 0x22c55e, showAlways: false }
+        ];
+
+        const pointMeshes = {}; const labelElements = {}; const hideableModels = [];
+        window.modelsDict = {}; 
+        window.quizAPassed = false;
+        
+        const posB = mathToThree(8, 6, 4);
+        const posC = mathToThree(4, 4, 7);
+        const posD = mathToThree(8, 6, 11);
+
+        function createThickDashedLine(mathP1, mathP2, colorHex) {
+            const p1 = mathToThree(mathP1[0], mathP1[1], mathP1[2]);
+            const p2 = mathToThree(mathP2[0], mathP2[1], mathP2[2]);
+            const distance = p1.distanceTo(p2);
+            const dashLength = 0.4; const gapLength = 0.25;
+            const totalDashes = Math.floor(distance / (dashLength + gapLength));
+            const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+            const radius = 0.05; 
+            const group = new THREE.Group();
+            for (let i = 0; i <= totalDashes; i++) {
+                const cyl = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, dashLength, 8).rotateX(Math.PI/2), new THREE.MeshBasicMaterial({ color: colorHex }));
+                const centerDist = i * (dashLength + gapLength) + dashLength / 2;
+                if (centerDist > distance) break;
+                const pos = p1.clone().add(dir.clone().multiplyScalar(centerDist));
+                cyl.position.copy(pos); cyl.lookAt(p2); group.add(cyl);
+            }
+            return group;
+        }
+
+        pointData.forEach(pt => {
+            const pos3D = mathToThree(pt.coords[0], pt.coords[1], pt.coords[2]);
+            
+            if (['O', 'A', 'B', 'C', 'D'].includes(pt.id)) {
+                // Quả cầu biểu diễn các điểm A, B, C, D dùng màu tím đậm (#800080)
+                const sphereColor = ['A', 'B', 'C', 'D'].includes(pt.id) ? 0x800080 : pt.color;
+                const coreSphere = new THREE.Mesh(new THREE.SphereGeometry(0.25, 24, 24), new THREE.MeshBasicMaterial({ color: sphereColor, depthTest: false }));
+                const glowSphere = new THREE.Mesh(new THREE.SphereGeometry(0.42, 24, 24), new THREE.MeshBasicMaterial({ color: sphereColor, transparent: true, opacity: 0.45, depthTest: false }));
+                coreSphere.add(glowSphere); coreSphere.position.copy(pos3D); coreSphere.visible = pt.showAlways;
+                scene.add(coreSphere); pointMeshes[pt.id + "_core"] = coreSphere; 
+                if (!window.glowingSpheres) window.glowingSpheres = []; window.glowingSpheres.push(glowSphere);
+            }
+
+            if (pt.id === 'O') {
+                const hqGroup = new THREE.Group();
+                const bldgColor = 0xfacc15; const roofColor = 0xb91c1c; const darkColor = 0x422006; 
+                const bldgMat = new THREE.MeshLambertMaterial({ color: bldgColor });
+                const roofMat = new THREE.MeshLambertMaterial({ color: roofColor });
+                const darkMat = new THREE.MeshLambertMaterial({ color: darkColor });
+                const whiteMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+
+                const centerW = 4, centerH = 2.5, centerD = 2.5;
+                const centerBlock = new THREE.Mesh(new THREE.BoxGeometry(centerW, centerH, centerD), bldgMat);
+                centerBlock.position.y = centerH / 2; hqGroup.add(centerBlock);
+
+                for (let i = -1.5; i <= 1.5; i += 1.0) {
+                    const door = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.0, 0.1), darkMat); door.position.set(i, 0.5, centerD / 2 + 0.05);
+                    const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16), darkMat); arch.rotation.x = Math.PI / 2; arch.position.set(i, 1.0, centerD / 2 + 0.05);
+                    hqGroup.add(door, arch);
+                    const win = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.1), darkMat); win.position.set(i, 1.6, centerD / 2 + 0.05);
+                    const winArch = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 16), darkMat); winArch.rotation.x = Math.PI / 2; winArch.position.set(i, 1.95, centerD / 2 + 0.05);
+                    hqGroup.add(win, winArch);
+                }
+
+                const pedimentShape = new THREE.Shape(); pedimentShape.moveTo(-2, 0); pedimentShape.lineTo(2, 0); pedimentShape.lineTo(0, 0.8);
+                const pediment = new THREE.Mesh(new THREE.ExtrudeGeometry(pedimentShape, { depth: 0.2, bevelEnabled: false }), bldgMat);
+                pediment.position.set(0, centerH, centerD / 2 - 0.1); hqGroup.add(pediment);
+
+                const wingW = 2.2, wingH = 2.8, wingD = 2.8;
+                const leftWing = new THREE.Mesh(new THREE.BoxGeometry(wingW, wingH, wingD), bldgMat); leftWing.position.set(-(centerW / 2 + wingW / 2), wingH / 2, 0); hqGroup.add(leftWing);
+                const rightWing = new THREE.Mesh(new THREE.BoxGeometry(wingW, wingH, wingD), bldgMat); rightWing.position.set((centerW / 2 + wingW / 2), wingH / 2, 0); hqGroup.add(rightWing);
+
+                [-3.1, 3.1].forEach(x => {
+                    const door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.2, 0.1), darkMat); door.position.set(x, 0.6, wingD / 2 + 0.05);
+                    const arch = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16), darkMat); arch.rotation.x = Math.PI / 2; arch.position.set(x, 1.2, wingD / 2 + 0.05);
+                    hqGroup.add(door, arch);
+                    const win = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.8, 0.1), darkMat); win.position.set(x, 2.0, wingD / 2 + 0.05);
+                    const winArch = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 16), darkMat); winArch.rotation.x = Math.PI / 2; winArch.position.set(x, 2.4, wingD / 2 + 0.05);
+                    hqGroup.add(win, winArch);
+                });
+
+                const roofGeo = new THREE.ConeGeometry(wingW * 0.75, 1.8, 4); roofGeo.rotateY(Math.PI / 4);
+                const leftRoof = new THREE.Mesh(roofGeo, roofMat); leftRoof.position.set(-(centerW / 2 + wingW / 2), wingH + 0.9, 0); hqGroup.add(leftRoof);
+                const rightRoof = new THREE.Mesh(roofGeo, roofMat); rightRoof.position.set((centerW / 2 + wingW / 2), wingH + 0.9, 0); hqGroup.add(rightRoof);
+
+                const tower1 = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.2, 2.0), bldgMat); tower1.position.set(0, centerH + 0.6, 0); hqGroup.add(tower1);
+                const clock = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.1, 16), whiteMat); clock.rotation.x = Math.PI / 2; clock.position.set(0, centerH + 0.7, 1.05); hqGroup.add(clock);
+                const tower2 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.8, 1.2), bldgMat); tower2.position.set(0, centerH + 1.2 + 0.9, 0); hqGroup.add(tower2);
+                const towerDome = new THREE.Mesh(new THREE.SphereGeometry(0.65, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2), bldgMat); towerDome.position.set(0, centerH + 3.0, 0); hqGroup.add(towerDome);
+
+                function createVNFlag(flagW, flagH, poleH) {
+                    const group = new THREE.Group();
+                    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, poleH), new THREE.MeshLambertMaterial({color: 0x9ca3af})); pole.position.y = poleH / 2; group.add(pole);
+                    const flagBg = new THREE.Mesh(new THREE.PlaneGeometry(flagW, flagH), new THREE.MeshLambertMaterial({color: 0xda251d, side: THREE.DoubleSide}));
+                    const starShape = new THREE.Shape(); const outer = Math.min(flagW, flagH) * 0.25; const inner = outer * 0.4;
+                    for (let i = 0; i < 5; i++) {
+                        const a1 = Math.PI / 2 + i * (Math.PI * 2) / 5; const a2 = Math.PI / 2 + (i + 0.5) * (Math.PI * 2) / 5;
+                        if (i === 0) starShape.moveTo(Math.cos(a1) * outer, Math.sin(a1) * outer); else starShape.lineTo(Math.cos(a1) * outer, Math.sin(a1) * outer);
+                        starShape.lineTo(Math.cos(a2) * inner, Math.sin(a2) * inner);
+                    }
+                    const starMat = new THREE.MeshBasicMaterial({color: 0xffff00, side: THREE.DoubleSide});
+                    const star1 = new THREE.Mesh(new THREE.ShapeGeometry(starShape), starMat); star1.position.set(0, 0, 0.02);
+                    const star2 = new THREE.Mesh(new THREE.ShapeGeometry(starShape), starMat); star2.position.set(0, 0, -0.02);
+                    flagBg.add(star1, star2); flagBg.position.set(flagW / 2, poleH - flagH / 2, 0);
+                    const flagWrap = new THREE.Group(); flagWrap.add(flagBg); flagWrap.rotation.y = Math.PI / 6; group.add(flagWrap);
+                    return group;
+                }
+
+                const centerFlag = createVNFlag(1.8, 1.2, 3.0); centerFlag.position.set(0, centerH + 3.0, 0); hqGroup.add(centerFlag);
+                const leftFlag = createVNFlag(1.2, 0.8, 2.0); leftFlag.position.set(-(centerW / 2 + wingW / 2), wingH + 1.8, 0); hqGroup.add(leftFlag);
+                const rightFlag = createVNFlag(1.2, 0.8, 2.0); rightFlag.position.set((centerW / 2 + wingW / 2), wingH + 1.8, 0); hqGroup.add(rightFlag);
+
+                const treeMat = new THREE.MeshLambertMaterial({ color: 0x15803d }); const trunkMat = new THREE.MeshLambertMaterial({ color: 0x78350f });
+                function createTree(x, z, scale = 1) {
+                    const tree = new THREE.Group();
+                    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.8), trunkMat); trunk.position.y = 0.4; tree.add(trunk);
+                    const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), treeMat); leaves.position.y = 1.0; tree.add(leaves);
+                    tree.position.set(x, 0, z); tree.scale.set(scale, scale, scale); return tree;
+                }
+                hqGroup.add(createTree(-5.5, 2.0, 1.2)); hqGroup.add(createTree(5.5, 2.0, 1.1)); hqGroup.add(createTree(-5.0, -2.5, 1.3)); hqGroup.add(createTree(5.0, -2.5, 1.0));
+
+                hqGroup.scale.set(0.42, 0.42, 0.42); hqGroup.position.copy(pos3D); hqGroup.visible = pt.showAlways; scene.add(hqGroup);
+                hideableModels.push(hqGroup); window.modelsDict['O'] = hqGroup;
+
+            } else if (pt.id === 'A') {
+                const warehouseGroup = new THREE.Group();
+                const base = new THREE.Mesh(new THREE.BoxGeometry(11, 0.2, 7), new THREE.MeshLambertMaterial({ color: 0xe5e7eb })); base.position.set(0, 0.1, 0); warehouseGroup.add(base);
+                const whBody = new THREE.Mesh(new THREE.BoxGeometry(10, 3.0, 4.5), new THREE.MeshLambertMaterial({ color: 0xffffff })); whBody.position.set(0, 1.6, -1.0); warehouseGroup.add(whBody);
+                const roofShape = new THREE.Shape(); roofShape.moveTo(-2.5, 0); roofShape.lineTo(0, 1.8); roofShape.lineTo(2.5, 0);
+                const roofGeo = new THREE.ExtrudeGeometry(roofShape, { depth: 4.9, bevelEnabled: false }); const roofMat = new THREE.MeshLambertMaterial({ color: 0xe11d48 });
+                const roof1 = new THREE.Mesh(roofGeo, roofMat); roof1.position.set(-2.5, 3.1, -3.45); warehouseGroup.add(roof1);
+                const roof2 = new THREE.Mesh(roofGeo, roofMat); roof2.position.set(2.5, 3.1, -3.45); warehouseGroup.add(roof2);
+                
+                const doorGeo = new THREE.BoxGeometry(3.0, 1.8, 0.05); const doorMat = new THREE.MeshLambertMaterial({ color: 0x9ca3af });
+                const door1 = new THREE.Mesh(doorGeo, doorMat); door1.position.set(-2.5, 1.0, 1.26); warehouseGroup.add(door1);
+                const door2 = new THREE.Mesh(doorGeo, doorMat); door2.position.set(2.5, 1.0, 1.26); warehouseGroup.add(door2);
+                
+                const winMat = new THREE.MeshLambertMaterial({ color: 0x7dd3fc });
+                for (let i = 0; i < 5; i++) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.05), winMat); win.position.set(-4.1 + i * 0.8, 2.3, 1.27); warehouseGroup.add(win); }
+                for (let i = 0; i < 5; i++) { const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.05), winMat); win.position.set(0.9 + i * 0.8, 2.3, 1.27); warehouseGroup.add(win); }
+
+                function createBox(x, y, z) {
+                    const boxG = new THREE.Group();
+                    const bMesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshLambertMaterial({ color: 0xd97706 })); 
+                    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(bMesh.geometry), new THREE.LineBasicMaterial({ color: 0x78350f })); boxG.add(bMesh, edges);
+                    const label = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.1), new THREE.MeshBasicMaterial({ color: 0xffffff })); label.position.set(-0.12, 0.15, 0.251); boxG.add(label);
+                    boxG.position.set(x, y, z); return boxG;
+                }
+                
+                const palletGroup = new THREE.Group();
+                const pBase = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.15, 1.7), new THREE.MeshLambertMaterial({ color: 0x78350f })); pBase.position.y = 0.075; palletGroup.add(pBase);
+                for(let x=0; x<3; x++) { for(let y=0; y<3; y++) { palletGroup.add(createBox(-0.55 + x*0.55, 0.4, 0.3)); } } 
+                palletGroup.position.set(2.5, 0.2, 1.8); warehouseGroup.add(palletGroup);
+
+                const forklift = new THREE.Group();
+                const fBody = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.8), new THREE.MeshLambertMaterial({ color: 0xfacc15 })); fBody.position.set(0, 0.55, 0); forklift.add(fBody);
+                const wGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.2, 16); wGeo.rotateX(Math.PI/2); const wMat = new THREE.MeshLambertMaterial({ color: 0x1f2937 });
+                const w1 = new THREE.Mesh(wGeo, wMat); w1.position.set(0.45, 0.25, 0.45); forklift.add(w1);
+                const w2 = new THREE.Mesh(wGeo, wMat); w2.position.set(-0.45, 0.25, 0.45); forklift.add(w2);
+                const w3 = new THREE.Mesh(wGeo, wMat); w3.position.set(0.45, 0.25, -0.45); forklift.add(w3);
+                const w4 = new THREE.Mesh(wGeo, wMat); w4.position.set(-0.45, 0.25, -0.45); forklift.add(w4);
+                
+                const forkMat = new THREE.MeshLambertMaterial({ color: 0x4b5563 });
+                const fMast = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.8, 0.7), forkMat); fMast.position.set(0.75, 0.9, 0); forklift.add(fMast);
+                const prong1 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.05, 0.15), forkMat); prong1.position.set(1.2, 0.25, 0.2); forklift.add(prong1);
+                const prong2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.05, 0.15), forkMat); prong2.position.set(1.2, 0.25, -0.2); forklift.add(prong2);
+                
+                const frameMat = new THREE.MeshLambertMaterial({ color: 0x111827 });
+                const roofF = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 0.8), frameMat); roofF.position.set(-0.1, 1.8, 0); forklift.add(roofF);
+                const p1 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.8, 0.05), frameMat); p1.position.set(0.4, 1.4, 0.35); forklift.add(p1);
+                const p2 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.8, 0.05), frameMat); p2.position.set(-0.6, 1.4, 0.35); forklift.add(p2);
+                const p3 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.8, 0.05), frameMat); p3.position.set(0.4, 1.4, -0.35); forklift.add(p3);
+                const p4 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.8, 0.05), frameMat); p4.position.set(-0.6, 1.4, -0.35); forklift.add(p4);
+                const seat = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshLambertMaterial({color: 0x333333})); seat.position.set(-0.2, 1.1, 0); forklift.add(seat);
+                
+                for(let i=0; i<3; i++) { forklift.add(createBox(1.15, 0.52 + i*0.5, 0)); }
+                forklift.position.set(-2.0, 0.2, 1.5); forklift.rotation.y = Math.PI / 6; warehouseGroup.add(forklift);
+
+                warehouseGroup.scale.set(0.5, 0.5, 0.5); warehouseGroup.position.copy(pos3D); warehouseGroup.visible = pt.showAlways; scene.add(warehouseGroup);
+                hideableModels.push(warehouseGroup); window.modelsDict['A'] = warehouseGroup;
+
+            } else if (pt.id === 'B') {
+                const floodedVillage = new THREE.Group();
+                const localWater = new THREE.Mesh(new THREE.PlaneGeometry(24, 24), new THREE.MeshLambertMaterial({ color: 0x0ea5e9, transparent: true, opacity: 0.85, side: THREE.DoubleSide })); 
+                localWater.rotation.x = -Math.PI / 2; localWater.position.y = 1.2; floodedVillage.add(localWater);
+
+                const h1Group = new THREE.Group();
+                const h1Body = new THREE.Mesh(new THREE.BoxGeometry(4.5, 3.5, 3.5), new THREE.MeshLambertMaterial({color: 0xfde047})); h1Body.position.y = 1.75; h1Group.add(h1Body);
+                const h1RoofShape = new THREE.Shape(); h1RoofShape.moveTo(-2.5, 0); h1RoofShape.lineTo(2.5, 0); h1RoofShape.lineTo(0, 2.0);
+                const h1Roof = new THREE.Mesh(new THREE.ExtrudeGeometry(h1RoofShape, {depth: 3.9, bevelEnabled: false}), new THREE.MeshLambertMaterial({color: 0x5c3a21})); h1Roof.position.set(0, 3.5, -1.95); h1Group.add(h1Roof);
+                const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 0.8), new THREE.MeshLambertMaterial({color: 0x6b7280})); chimney.position.set(1.2, 4.2, 0); h1Group.add(chimney);
+                const h1Door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.0, 0.1), new THREE.MeshLambertMaterial({color: 0x78350f})); h1Door.position.set(-1.2, 1.0, 1.76);
+                const knob = new THREE.Mesh(new THREE.SphereGeometry(0.1), new THREE.MeshBasicMaterial({color: 0xffffff})); knob.position.set(0.4, 0, 0.06); h1Door.add(knob); h1Group.add(h1Door);
+                const h1Win = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.2, 0.1), new THREE.MeshLambertMaterial({color: 0x1e3a8a})); h1Win.position.set(1.1, 1.5, 1.76);
+                const wCrossV = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.2, 0.12), new THREE.MeshLambertMaterial({color: 0x78350f})); const wCrossH = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.12), new THREE.MeshLambertMaterial({color: 0x78350f}));
+                h1Win.add(wCrossV, wCrossH); h1Group.add(h1Win);
+                const fenceGroup = new THREE.Group();
+                for(let i=0; i<8; i++) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.2), new THREE.MeshLambertMaterial({color: 0x8b5a2b})); post.position.set(-2.0 + i*0.6, 0.6, 2.5); fenceGroup.add(post); }
+                const rail1 = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.15, 0.08), new THREE.MeshLambertMaterial({color: 0x8b5a2b})); rail1.position.set(0.1, 0.4, 2.55);
+                const rail2 = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.15, 0.08), new THREE.MeshLambertMaterial({color: 0x8b5a2b})); rail2.position.set(0.1, 0.9, 2.55);
+                fenceGroup.add(rail1, rail2); h1Group.add(fenceGroup);
+                h1Group.position.set(-4, -0.5, 1); floodedVillage.add(h1Group);
+
+                const treeGroup = new THREE.Group();
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.6, 4.5), new THREE.MeshLambertMaterial({color: 0x5c3a21})); trunk.position.y = 2.25; treeGroup.add(trunk);
+                const leaves = new THREE.Group(); const lMat = new THREE.MeshLambertMaterial({color: 0x4ade80});
+                const l1 = new THREE.Mesh(new THREE.SphereGeometry(1.8), lMat); l1.position.set(0, 4.5, 0);
+                const l2 = new THREE.Mesh(new THREE.SphereGeometry(1.5), lMat); l2.position.set(-1.2, 4.0, 0.6);
+                const l3 = new THREE.Mesh(new THREE.SphereGeometry(1.6), lMat); l3.position.set(1.2, 4.2, -0.6);
+                const l4 = new THREE.Mesh(new THREE.SphereGeometry(1.3), lMat); l4.position.set(0, 5.5, 0.5);
+                leaves.add(l1, l2, l3, l4); treeGroup.add(leaves); treeGroup.rotation.z = -0.35; treeGroup.position.set(0, -0.5, -2); floodedVillage.add(treeGroup);
+
+                const h2Group = new THREE.Group();
+                const h2Body = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.8, 3.0), new THREE.MeshLambertMaterial({color: 0xffffff})); h2Body.position.y = 1.4; h2Group.add(h2Body);
+                const h2RoofShape = new THREE.Shape(); h2RoofShape.moveTo(-2.0, 0); h2RoofShape.lineTo(2.0, 0); h2RoofShape.lineTo(0, 1.8);
+                const h2Roof = new THREE.Mesh(new THREE.ExtrudeGeometry(h2RoofShape, {depth: 3.4, bevelEnabled: false}), new THREE.MeshLambertMaterial({color: 0x374151})); h2Roof.position.set(0, 2.8, -1.7); h2Group.add(h2Roof);
+                const h2Door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.6, 0.1), new THREE.MeshLambertMaterial({color: 0x78350f})); h2Door.position.set(-0.8, 0.8, 1.51); h2Group.add(h2Door);
+                const h2Win = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 0.1), new THREE.MeshLambertMaterial({color: 0x9ca3af})); h2Win.position.set(0.8, 1.3, 1.51); h2Group.add(h2Win);
+                h2Group.position.set(4.5, 0, -1.5); floodedVillage.add(h2Group);
+
+                function createCar(colorHex) {
+                    const car = new THREE.Group(); const cMat = new THREE.MeshLambertMaterial({color: colorHex});
+                    const bottom = new THREE.Mesh(new THREE.BoxGeometry(2.5, 0.7, 1.2), cMat); bottom.position.y = 0.35;
+                    const top = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.6, 1.1), cMat); top.position.set(-0.2, 1.0, 0);
+                    const windowMat = new THREE.MeshLambertMaterial({color: 0x1f2937});
+                    const wFront = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 1.0), windowMat); wFront.position.set(0.5, 1.0, 0); wFront.rotation.z = -0.2;
+                    const wBack = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 1.0), windowMat); wBack.position.set(-0.9, 1.0, 0); wBack.rotation.z = 0.2;
+                    const wSide = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.5, 1.15), windowMat); wSide.position.set(-0.2, 1.0, 0);
+                    const wheelMat = new THREE.MeshLambertMaterial({color: 0x111827}); const wGeo = new THREE.CylinderGeometry(0.3, 0.3, 1.3); wGeo.rotateX(Math.PI/2);
+                    const w1 = new THREE.Mesh(wGeo, wheelMat); w1.position.set(0.7, 0.3, 0); const w2 = new THREE.Mesh(wGeo, wheelMat); w2.position.set(-0.7, 0.3, 0);
+                    car.add(bottom, top, wFront, wBack, wSide, w1, w2); return car;
+                }
+                const yellowCar = createCar(0xfef08a); yellowCar.position.set(0.5, 0.5, 2.5); yellowCar.rotation.set(-0.2, -Math.PI / 6, Math.PI / 8); floodedVillage.add(yellowCar);
+                const silverCar = createCar(0xd1d5db); silverCar.position.set(6.5, -0.2, 3.5); silverCar.rotation.set(Math.PI / 4, Math.PI / 5, -Math.PI / 3); floodedVillage.add(silverCar);
+
+                const poleGroup = new THREE.Group(); const pMat = new THREE.MeshLambertMaterial({color: 0x9ca3af});
+                for(let i=0; i<3; i++) {
+                    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6.0), pMat); pole.position.set(-6 + i*6, 3.0, -6);
+                    const cross = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.15, 0.15), pMat); cross.position.set(-6 + i*6, 5.0, -6); poleGroup.add(pole, cross);
+                }
+                const lineMat = new THREE.LineBasicMaterial({color: 0x4b5563});
+                const line1 = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-7, 5.1, -6), new THREE.Vector3(7, 5.1, -6)]), lineMat);
+                const line2 = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-7, 4.9, -6), new THREE.Vector3(7, 4.9, -6)]), lineMat);
+                poleGroup.add(line1, line2); floodedVillage.add(poleGroup);
+
+                const cloudsGroup = new THREE.Group();
+                const cloudMat1 = new THREE.MeshLambertMaterial({color: 0x3b0764}); const cloudMat2 = new THREE.MeshLambertMaterial({color: 0x831843});
+                function createCloud(mat) {
+                    const cloud = new THREE.Group(); const geo = new THREE.SphereGeometry(1.5, 16, 16);
+                    const s1 = new THREE.Mesh(geo, mat); s1.position.set(0, 0, 0); s1.scale.set(1.5, 1, 1.2);
+                    const s2 = new THREE.Mesh(geo, mat); s2.position.set(-1.5, -0.5, 0.5); s2.scale.set(1.2, 0.8, 1);
+                    const s3 = new THREE.Mesh(geo, mat); s3.position.set(1.5, -0.2, -0.5); s3.scale.set(1.3, 0.9, 1);
+                    const s4 = new THREE.Mesh(geo, mat); s4.position.set(0, 0.8, 0); s4.scale.set(1, 0.8, 1);
+                    cloud.add(s1, s2, s3, s4); return cloud;
+                }
+                const c1 = createCloud(cloudMat1); c1.position.set(-3.5, 13, 1); cloudsGroup.add(c1);
+                const c2 = createCloud(cloudMat2); c2.position.set(1.0, 14.5, -1); c2.scale.set(1.5, 1.5, 1.5); cloudsGroup.add(c2);
+                const c3 = createCloud(cloudMat1); c3.position.set(4.5, 13.5, 0); cloudsGroup.add(c3);
+                floodedVillage.add(cloudsGroup);
+
+                const lightningShape = new THREE.Shape();
+                lightningShape.moveTo(0, 0); lightningShape.lineTo(-0.8, -2); lightningShape.lineTo(0.5, -2);
+                lightningShape.lineTo(-1.2, -4); lightningShape.lineTo(0.3, -4); lightningShape.lineTo(-0.8, -7); lightningShape.lineTo(1.2, -3.5);
+                lightningShape.lineTo(0.0, -3.5); lightningShape.lineTo(1.0, -1.5); lightningShape.lineTo(-0.2, -1.5); lightningShape.lineTo(0, 0);
+                const lightningGeo = new THREE.ExtrudeGeometry(lightningShape, { depth: 0.15, bevelEnabled: false });
+                const lightningMat = new THREE.MeshBasicMaterial({color: 0xfacc15}); 
+                
+                window.lightningBolts = [];
+                for(let i = 0; i < 3; i++) {
+                    const bolt = new THREE.Mesh(lightningGeo, lightningMat);
+                    const baseX = -3.5 + i * 3.8; const baseZ = 1 - i * 1.0;
+                    bolt.position.set(baseX, 13, baseZ); bolt.userData = { baseX: baseX, baseZ: baseZ };
+                    window.lightningBolts.push(bolt); floodedVillage.add(bolt);
+                }
+
+                floodedVillage.scale.set(0.4, 0.4, 0.4); floodedVillage.position.copy(pos3D); floodedVillage.visible = pt.showAlways; scene.add(floodedVillage);
+                hideableModels.push(floodedVillage); window.modelsDict['B'] = floodedVillage;
+
+            } else if (pt.id === 'C') {
+                const stationGroup = new THREE.Group();
+                const ground = new THREE.Mesh(new THREE.BoxGeometry(16, 0.2, 12), new THREE.MeshLambertMaterial({color: 0xd1d5db})); ground.position.set(-4, 0.1, 2.5); stationGroup.add(ground);
+
+                const whGroup = new THREE.Group();
+                const whW = 8, whH = 3.5, whD = 4;
+                const whBody = new THREE.Mesh(new THREE.BoxGeometry(whW, whH, whD), new THREE.MeshLambertMaterial({color: 0x65a30d})); whBody.position.y = whH / 2; whGroup.add(whBody);
+                const roofShape = new THREE.Shape(); roofShape.moveTo(-whW/2 - 0.2, 0); roofShape.lineTo(whW/2 + 0.2, 0); roofShape.lineTo(0, 1.5);
+                const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(roofShape, { depth: whD + 0.4, bevelEnabled: false }), new THREE.MeshLambertMaterial({color: 0x475569})); 
+                roof.position.set(0, whH, -(whD + 0.4)/2); whGroup.add(roof);
+                const sign = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, 0.1), new THREE.MeshLambertMaterial({color: 0xfacc15})); sign.position.set(0, whH - 0.5, whD/2 + 0.05); whGroup.add(sign);
+                
+                for(let i=0; i<3; i++) {
+                    const door = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 0.1), new THREE.MeshLambertMaterial({color: 0xf1f5f9})); door.position.set(-2.5 + i*2.5, 1.1, whD/2 + 0.05); whGroup.add(door);
+                    for(let j=0; j<5; j++) { const line = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.05, 0.11), new THREE.MeshLambertMaterial({color: 0x94a3b8})); line.position.set(-2.5 + i*2.5, 0.4 + j*0.4, whD/2 + 0.05); whGroup.add(line); }
+                    const num = document.createElement('canvas'); num.width = 64; num.height = 64; const ctx = num.getContext('2d'); ctx.fillStyle = '#facc15'; ctx.fillRect(0,0,64,64); ctx.fillStyle = '#000'; ctx.font = 'bold 40px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText((i+1).toString(), 32, 32);
+                    const numTex = new THREE.CanvasTexture(num); const numMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), new THREE.MeshBasicMaterial({map: numTex})); numMesh.position.set(-2.5 + i*2.5, 2.5, whD/2 + 0.06); whGroup.add(numMesh);
+                }
+                whGroup.position.set(-7, 0, 0.5); stationGroup.add(whGroup);
+
+                const convGroup = new THREE.Group();
+                const convBelt = new THREE.Mesh(new THREE.BoxGeometry(6, 0.1, 0.8), new THREE.MeshLambertMaterial({color: 0x3b82f6})); convBelt.position.set(0, 0.6, 0); convGroup.add(convBelt);
+                for(let i=0; i<5; i++) { const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.6), new THREE.MeshLambertMaterial({color: 0x9ca3af})); leg.position.set(-2.5 + i*1.25, 0.3, 0); convGroup.add(leg); }
+                for(let i=0; i<4; i++) { const box = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), new THREE.MeshLambertMaterial({color: 0xfacc15})); box.position.set(-2.0 + i*1.5, 0.9, 0); convGroup.add(box); }
+                convGroup.position.set(-5.5, 0, 4.5); stationGroup.add(convGroup);
+
+                const truckGroup = new THREE.Group();
+                const truckBlue = new THREE.MeshLambertMaterial({color: 0x2563eb}); const truckDark = new THREE.MeshLambertMaterial({color: 0x1e3a8a});
+                const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.8, 1.8), truckBlue); cabin.position.set(3, 1.2, 0); truckGroup.add(cabin);
+                const hood = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0, 1.6), truckBlue); hood.position.set(4.2, 0.8, 0); truckGroup.add(hood);
+                const glass = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.8, 1.6), new THREE.MeshLambertMaterial({color: 0x38bdf8})); glass.position.set(3, 1.4, 0); truckGroup.add(glass);
+                const container = new THREE.Mesh(new THREE.BoxGeometry(6, 2.2, 2.0), truckDark); container.position.set(-0.8, 1.5, 0); truckGroup.add(container);
+                const wheelMat = new THREE.MeshLambertMaterial({color: 0x111827}); const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 2.2); wheelGeo.rotateX(Math.PI/2);
+                [4.0, 2.5, -0.5, -2.0, -3.2].forEach(x => { const w = new THREE.Mesh(wheelGeo, wheelMat); w.position.set(x, 0.35, 0); truckGroup.add(w); });
+                truckGroup.scale.set(0.2, 0.2, 0.2);
+                truckGroup.position.set(-0.5, 0, 4.0); truckGroup.rotation.y = -Math.PI / 8; stationGroup.add(truckGroup);
+
+                const padGroup = new THREE.Group();
+                const padBase = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 0.1, 32), new THREE.MeshLambertMaterial({color: 0x374151})); padBase.position.y = 0.05; padGroup.add(padBase);
+                const whiteMatObj = new THREE.MeshBasicMaterial({color: 0xffffff});
+                const h1 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 3.5), whiteMatObj); h1.position.set(-1.5, 0.1, 0); padGroup.add(h1);
+                const h2 = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 3.5), whiteMatObj); h2.position.set(1.5, 0.1, 0); padGroup.add(h2);
+                const h3 = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.15, 0.4), whiteMatObj); h3.position.set(0, 0.1, 0); padGroup.add(h3);
+                padGroup.position.set(0, 0.1, 0); stationGroup.add(padGroup);
+
+                stationGroup.scale.set(0.45, 0.45, 0.45); stationGroup.position.copy(pos3D); stationGroup.visible = pt.showAlways; scene.add(stationGroup);
+                hideableModels.push(stationGroup); window.modelsDict['C'] = stationGroup;
+            }
+            
+            pointMeshes[pt.id] = pointMeshes[pt.id + "_core"];
+            const label = document.createElement('div'); label.className = 'point-label'; label.textContent = pt.id; label.style.color = '#' + pt.color.toString(16).padStart(6, '0'); label.style.display = pt.showAlways ? 'block' : 'none'; labelsContainer.appendChild(label); labelElements[pt.id] = label;
+            
+            if (['A', 'B', 'C', 'D'].includes(pt.id)) {
+                const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.8, 32), new THREE.MeshBasicMaterial({ color: pt.color, transparent: true, opacity: 0.8, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.copy(pos3D); ring.position.y += 0.15; ring.visible = pt.showAlways; scene.add(ring);
+                const light = new THREE.PointLight(pt.color, 1.5, 15); light.position.copy(pos3D); light.position.y += 3.5; light.visible = pt.showAlways; scene.add(light);
+                pointMeshes[pt.id + "_ring"] = ring; pointMeshes[pt.id + "_light"] = light;
+                if (!window.blinkingMarkers) window.blinkingMarkers = []; window.blinkingMarkers.push({ ring, light, id: pt.id });
+                
+                const projOxy = createThickDashedLine(pt.coords, [pt.coords[0], pt.coords[1], 0], pt.color);
+                const projOz = createThickDashedLine(pt.coords, [0, 0, pt.coords[2]], pt.color);
+                projOxy.visible = pt.showAlways; projOz.visible = pt.showAlways;
+                scene.add(projOxy, projOz);
+                pointMeshes[pt.id + "_projOxy"] = projOxy; pointMeshes[pt.id + "_projOz"] = projOz;
+            }
+        });
+
+        // VECTORS AC, CD
+        const vectorGroup = new THREE.Group();
+        const posA = pointMeshes['A_core'] ? pointMeshes['A_core'].position : mathToThree(2, 3, 5);
+        function createThickArrow(startPt, endPt, colorHex, radius, isDashed = false) {
+            const start = startPt.clone(), end = endPt.clone(), direction = new THREE.Vector3().subVectors(end, start), length = direction.length();
+            const group = new THREE.Group(); let mat = isDashed ? new THREE.MeshBasicMaterial({ color: colorHex, wireframe: true }) : new THREE.MeshLambertMaterial({ color: colorHex });
+            const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length - 1.2, 16).rotateX(Math.PI / 2), mat); cylinder.position.z = (length - 1.2) / 2; group.add(cylinder);
+            const cone = new THREE.Mesh(new THREE.ConeGeometry(radius * 2.5, 1.2, 16).rotateX(Math.PI / 2), mat); cone.position.z = length - 0.6; group.add(cone);
+            group.position.copy(start); group.lookAt(end); return group;
+        }
+        const arrowAC = createThickArrow(posA, posC, 0xff0000, 0.20, false); 
+        const arrowCD = createThickArrow(posC, posD, 0xffff00, 0.16, false);  
+        vectorGroup.add(arrowAC, arrowCD); vectorGroup.visible = false; scene.add(vectorGroup); window.vectorGroup = vectorGroup;
+
+        // GÓI HÀNG
+        const packagesGroup = new THREE.Group();
+        
+        function createPinkHeartGiftBox() {
+            const group = new THREE.Group();
+            const boxMat = new THREE.MeshLambertMaterial({color: 0xff8da1});
+            const lidMat = new THREE.MeshLambertMaterial({color: 0xff6b8b});
+            const ribbonMat = new THREE.MeshLambertMaterial({color: 0xd32f2f});
+
+            const bodyGeo = new THREE.BoxGeometry(0.8, 0.7, 0.8);
+            const body = new THREE.Mesh(bodyGeo, boxMat);
+            body.position.y = 0.35;
+            group.add(body);
+
+            const lidGeo = new THREE.BoxGeometry(0.9, 0.15, 0.9);
+            const lid = new THREE.Mesh(lidGeo, lidMat);
+            lid.position.y = 0.775;
+            group.add(lid);
+
+            const rBody1 = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.72, 0.08), ribbonMat); rBody1.position.y = 0.35;
+            const rBody2 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.72, 0.82), ribbonMat); rBody2.position.y = 0.35;
+            group.add(rBody1, rBody2);
+
+            const rLid1 = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.17, 0.1), ribbonMat); rLid1.position.y = 0.775;
+            const rLid2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.17, 0.92), ribbonMat); rLid2.position.y = 0.775;
+            group.add(rLid1, rLid2);
+
+            const bowGroup = new THREE.Group();
+            for(let i=0; i<4; i++) {
+                const loopGeo = new THREE.TorusGeometry(0.2, 0.04, 8, 16);
+                loopGeo.scale(1, 2, 1);
+                const loop = new THREE.Mesh(loopGeo, ribbonMat);
+                loop.rotation.z = Math.PI / 4;
+                loop.rotation.y = (i * Math.PI / 2) + Math.PI/4;
+                loop.position.y = 0.15;
+                bowGroup.add(loop);
+            }
+            bowGroup.position.y = 0.85;
+            group.add(bowGroup);
+
+            const heartShape = new THREE.Shape();
+            heartShape.moveTo(0, 0.05);
+            heartShape.bezierCurveTo(0.05, 0.05, 0.1, 0, 0.1, -0.05);
+            heartShape.bezierCurveTo(0.1, -0.12, 0.05, -0.15, 0, -0.22);
+            heartShape.bezierCurveTo(-0.05, -0.15, -0.1, -0.12, -0.1, -0.05);
+            heartShape.bezierCurveTo(-0.1, 0, -0.05, 0.05, 0, 0.05);
+            const heartGeo = new THREE.ExtrudeGeometry(heartShape, {depth: 0.02, bevelEnabled: false});
+            heartGeo.center();
+            const heartMat = new THREE.MeshLambertMaterial({color: 0xffcce0, emissive: 0x000000}); 
+            
+            const h1 = new THREE.Mesh(heartGeo, heartMat); h1.position.set(0, 0.35, 0.41); h1.scale.set(1.5,1.5,1.5); h1.userData.isHeart = true;
+            const h2 = new THREE.Mesh(heartGeo, heartMat); h2.position.set(0, 0.35, -0.41); h2.rotation.y = Math.PI; h2.scale.set(1.5,1.5,1.5); h2.userData.isHeart = true;
+            const h3 = new THREE.Mesh(heartGeo, heartMat); h3.position.set(0.41, 0.35, 0); h3.rotation.y = Math.PI/2; h3.scale.set(1.5,1.5,1.5); h3.userData.isHeart = true;
+            const h4 = new THREE.Mesh(heartGeo, heartMat); h4.position.set(-0.41, 0.35, 0); h4.rotation.y = -Math.PI/2; h4.scale.set(1.5,1.5,1.5); h4.userData.isHeart = true;
+            group.add(h1, h2, h3, h4);
+
+            return group;
+        }
+
+        const newOffsets = [];
+        for (let i=-1; i<=1; i++) { for (let j=-1; j<=1; j++) { newOffsets.push([i*1.0, 0, j*1.0]); } }
+        for (let i=-0.5; i<=0.5; i+=1) { for (let j=-0.5; j<=0.5; j+=1) { newOffsets.push([i*1.0, 0.95, j*1.0]); } }
+        newOffsets.push([0, 1.9, 0]);
+        
+        newOffsets.forEach(pos => {
+            const pkg = createPinkHeartGiftBox();
+            pkg.position.set(pos[0], pos[1], pos[2]); 
+            pkg.userData = { targetX: pos[0], targetY: pos[1], targetZ: pos[2] }; 
+            packagesGroup.add(pkg);
+        });
+        
+        packagesGroup.scale.set(1.2, 1.2, 1.2); packagesGroup.visible = false; scene.add(packagesGroup); window.reliefPackage = packagesGroup;
+        const successLabel = document.createElement('div'); successLabel.className = 'success-text'; successLabel.innerHTML = '❤️ Hãy cùng nhau lan tỏa yêu thương bạn nhé!'; successLabel.style.display = 'none'; labelsContainer.appendChild(successLabel); window.successLabel = successLabel;
+        
+        // TRỰC THĂNG ĐẬU TẠI C
+        const planeGroup = createParkedHelicopter(); planeGroup.scale.set(1.2, 1.2, 1.2); scene.add(planeGroup); planeGroup.position.copy(posC); planeGroup.rotation.y = -Math.PI / 4; planeGroup.visible = true; 
+
+        // HIỆU ỨNG MƯA
+        const rainCount = 2000; const rainGeo = new THREE.BufferGeometry(); const rainPosArray = new Float32Array(rainCount * 6); const rainVelocityArray = new Float32Array(rainCount);
+        for(let i = 0; i < rainCount; i++) {
+            const x = Math.random() * 100 - 50, y = Math.random() * 80, z = Math.random() * 100 - 50;
+            rainPosArray[i*6] = x; rainPosArray[i*6+1] = y; rainPosArray[i*6+2] = z; rainPosArray[i*6+3] = x + 0.5; rainPosArray[i*6+4] = y - 2.0; rainPosArray[i*6+5] = z; rainVelocityArray[i] = 0;
+        }
+        rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPosArray, 3));
+        const rainSystem = new THREE.LineSegments(rainGeo, new THREE.LineBasicMaterial({ color: 0xbae6fd, transparent: true, opacity: 0.5 })); scene.add(rainSystem);
+
+        let stormAudioInitialized = false, stormIsPlaying = false;
+        let rainNoise, windNoise, autoFilter, windFilter, windLFO;
+        
+        document.getElementById('btn-storm').addEventListener('click', async function() {
+            if (!stormAudioInitialized) {
+                await Tone.start();
+                autoFilter = new Tone.AutoFilter({ frequency: "8n", baseFrequency: 400, octaves: 2 }).toDestination();
+                rainNoise = new Tone.Noise("pink").connect(autoFilter); rainNoise.volume.value = -12; 
+                windFilter = new Tone.Filter(300, "lowpass").toDestination();
+                windNoise = new Tone.Noise("brown").connect(windFilter); windNoise.volume.value = -4; 
+                windLFO = new Tone.LFO(0.1, 150, 1200).connect(windFilter.frequency); 
+                autoFilter.start(); windLFO.start(); rainNoise.start(); windNoise.start();
+                stormAudioInitialized = true; stormIsPlaying = true;
+            } else {
+                if (stormIsPlaying) { rainNoise.stop(); windNoise.stop(); stormIsPlaying = false; } 
+                else { rainNoise.start(); windNoise.start(); stormIsPlaying = true; }
+            }
+            if (stormIsPlaying) {
+                this.innerHTML = "TẮT 🔇"; 
+                this.classList.remove("bg-red-500", "hover:bg-red-600", "border-red-600"); this.classList.add("bg-green-600", "hover:bg-green-700", "border-green-600");
+            } else {
+                this.innerHTML = "⛈ BẬT BÃO"; 
+                this.classList.remove("bg-green-600", "hover:bg-green-700", "border-green-600"); this.classList.add("bg-red-500", "hover:bg-red-600", "border-red-600");
+            }
+        });
+
+        // ẨN / HIỆN MÔ HÌNH
+        let modelsVisible = true;
+        window.modelsVisible = true;
+
+        document.getElementById('btn-hide-models').addEventListener('click', function() {
+            modelsVisible = !modelsVisible;
+            window.modelsVisible = modelsVisible;
+            Object.values(window.modelsDict).forEach(m => {
+                m.visible = modelsVisible;
+            });
+            this.innerHTML = modelsVisible ? "🙈 ẨN MÔ HÌNH" : "🙉 HIỆN MÔ HÌNH";
+            this.classList.toggle('bg-gray-600');
+            this.classList.toggle('bg-orange-600');
+            
+            planeGroup.visible = modelsVisible;
+            if (animationState.isDropping || animationState.hasDropped) window.reliefPackage.visible = modelsVisible;
+            if (animationState.hasDropped) window.successLabel.style.display = modelsVisible ? 'block' : 'none';
+        });
+
+        document.getElementById('btn-show-vectors').addEventListener('click', function() {
+            if (this.disabled) return;
+            window.vectorGroup.visible = !window.vectorGroup.visible;
+            this.classList.remove('animate-pulse', 'shadow-[0_0_15px_rgba(59,130,246,0.8)]');
+            
+            const btnDrop = document.getElementById('btn-drop-cargo');
+            if (window.vectorGroup.visible) {
+                this.classList.replace('bg-blue-500', 'bg-blue-700');
+                if (!animationState.isPlaying && !animationState.isDropping && !animationState.hasDropped) {
+                    btnDrop.disabled = false;
+                    btnDrop.classList.remove('bg-gray-400', 'bg-yellow-400', 'hover:bg-yellow-500', 'text-slate-900');
+                    btnDrop.classList.add('blink-red-btn', 'text-white');
+                }
+            } else {
+                this.classList.replace('bg-blue-700', 'bg-blue-500');
+                if (!animationState.isPlaying && !animationState.isDropping && !animationState.hasDropped) {
+                    btnDrop.classList.remove('blink-red-btn', 'text-white');
+                    btnDrop.classList.add('bg-yellow-400', 'text-slate-900');
+                    btnDrop.disabled = true;
+                }
+            }
+        });
+
+        let animationState = { isPlaying: false, progress: 0, speed: 0.006, isDropping: false, hasDropped: false, cargoBlinkTime: 0, dropIndex: 0, lastDropTime: 0 };
+        
+        let heliNoise, heliFilter, heliVol, heliStopTimeout = null;
+        async function startHelicopterSound() {
+            if (heliStopTimeout) { clearTimeout(heliStopTimeout); heliStopTimeout = null; }
+            if (Tone.context.state !== 'running') await Tone.start();
+            if (!heliNoise) {
+                heliNoise = new Tone.Noise("pink");
+                heliFilter = new Tone.AutoFilter({ frequency: 15, baseFrequency: 200, octaves: 3 });
+                heliVol = new Tone.Volume(-Infinity).toDestination();
+                heliNoise.connect(heliFilter); heliFilter.connect(heliVol);
+            }
+            heliNoise.start(); heliFilter.start();
+            heliVol.volume.rampTo(-2, 0.5); 
+        }
+
+        function stopHelicopterSound(immediate = false) {
+            if (heliStopTimeout) { clearTimeout(heliStopTimeout); heliStopTimeout = null; }
+            if (heliVol) {
+                if (immediate) {
+                    heliVol.volume.value = -Infinity;
+                    if (heliNoise) heliNoise.stop();
+                    if (heliFilter) heliFilter.stop();
+                } else {
+                    heliVol.volume.rampTo(-Infinity, 1.5); 
+                    heliStopTimeout = setTimeout(() => {
+                        if (heliNoise) heliNoise.stop();
+                        if (heliFilter) heliFilter.stop();
+                        heliStopTimeout = null;
+                    }, 1500);
+                }
+            }
+        }
+
+        document.getElementById('btn-drop-cargo').addEventListener('click', () => {
+            const btn = document.getElementById('btn-drop-cargo');
+            if (btn.disabled) return; 
+            btn.disabled = true;
+            btn.classList.remove('blink-red-btn'); btn.classList.add('bg-gray-400'); btn.innerText = "🚁 Đang bay tới D...";
+            planeGroup.visible = window.modelsVisible !== false; 
+            
+            planeGroup.position.copy(posC); 
+            planeGroup.lookAt(posD);
+            
+            animationState.isPlaying = true; animationState.progress = 0; animationState.isDropping = false; animationState.hasDropped = false;
+            window.reliefPackage.visible = false; window.successLabel.style.display = 'none';
+            startHelicopterSound().catch(e => console.log("Audio error"));
+        });
+
+        // TRẮC NGHIỆM (theo vectơ CD = 2 AC và hệ phương trình tìm tọa độ D)
+        const aIds = [
+            'ans-a1', 'ans-a2', 'ans-a3', 'ans-a4', 'ans-a5', 'ans-a6', 'ans-a7', 'ans-a8',
+            'ans-s1', 'ans-s4',
+            'ans-s5', 'ans-s8',
+            'ans-s9', 'ans-s12',
+            'ans-x', 'ans-y', 'ans-z',
+            'ans-d1', 'ans-d2', 'ans-d3'
+        ];
+        const quizAnswers = {
+            'ans-a1': ['2'],
+            'ans-a2': ['x-4'], 'ans-a3': ['y-4'], 'ans-a4': ['z-7'],
+            'ans-a5': ['2'], 'ans-a6': ['1'], 'ans-a7': ['2'],
+            'ans-a8': ['2'],
+            'ans-s1': ['x-4'], 'ans-s4': ['4'],
+            'ans-s5': ['y-4'], 'ans-s8': ['2'],
+            'ans-s9': ['z-7'], 'ans-s12': ['4'],
+            'ans-x': ['8'], 'ans-y': ['6'], 'ans-z': ['11'],
+            'ans-d1': ['8'], 'ans-d2': ['6'], 'ans-d3': ['11']
+        };
+
+        function normalizeVal(v) {
+            return v.trim().toLowerCase().replace(/\s+/g, '');
+        }
+
+        function markInput(el, isCorrect) {
+            if (isCorrect) {
+                el.classList.remove('border-red-500');
+                el.classList.add('border-green-500', 'bg-green-100');
+            } else {
+                el.classList.remove('border-green-500', 'bg-green-100');
+                el.classList.add('border-red-500');
+            }
+        }
+
+        document.getElementById('btn-submit-a').addEventListener('click', () => {
+            let correctCount = 0;
+
+            for (const id of aIds) {
+                const el = document.getElementById(id);
+                const val = normalizeVal(el.value);
+                const isCorrect = quizAnswers[id].includes(val);
+                markInput(el, isCorrect);
+                if (isCorrect) correctCount++;
+            }
+
+            const resultDiv = document.getElementById('check-result-a'); resultDiv.classList.remove('hidden');
+            if (correctCount === aIds.length) {
+                window.quizAPassed = true;
+                resultDiv.innerHTML = "🎉 Chính xác!<br><span class='text-blue-700 block mt-1.5'>💡 Hãy nhấn nút 👁 để xem điều kỳ diệu!</span>";
+                resultDiv.className = "mt-2 text-center font-bold text-xs p-2 rounded bg-green-100 text-green-700 border border-green-300";
+                
+                if (pointMeshes['D_core']) pointMeshes['D_core'].visible = true;
+                if (pointMeshes['D_ring']) pointMeshes['D_ring'].visible = true;
+                if (pointMeshes['D_light']) pointMeshes['D_light'].visible = true; 
+                if (pointMeshes['D_projOxy']) pointMeshes['D_projOxy'].visible = true; 
+                if (pointMeshes['D_projOz']) pointMeshes['D_projOz'].visible = true; 
+                if (labelElements['D']) labelElements['D'].style.display = 'block';
+
+                const btnVectors = document.getElementById('btn-show-vectors'); 
+                btnVectors.disabled = false;
+                if (!window.vectorGroup.visible) {
+                    btnVectors.classList.add('animate-pulse', 'shadow-[0_0_15px_rgba(59,130,246,0.8)]');
+                }
+            } else {
+                resultDiv.innerHTML = `Đúng ${correctCount}/${aIds.length} ô. Thử lại nhé!`;
+                resultDiv.className = "mt-2 text-center font-bold text-xs p-2 rounded bg-red-100 text-red-700 border border-red-300";
+            }
+        });
+
+        // NÚT CHƠI LẠI: Đặt lại toàn bộ trạng thái về như lượt chơi đầu tiên
+        document.getElementById('btn-replay').addEventListener('click', () => {
+            // 1. Xóa sạch các ô nhập liệu và trạng thái kiểm tra đáp án
+            aIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.value = '';
+                    el.classList.remove('border-green-500', 'bg-green-100', 'border-red-500');
+                    el.classList.add('border-gray-400');
+                }
+            });
+            const resultDiv = document.getElementById('check-result-a');
+            resultDiv.classList.add('hidden');
+            resultDiv.innerHTML = '';
+            window.quizAPassed = false;
+
+            // 2. Ẩn điểm D và các đường gióng của D
+            if (pointMeshes['D_core']) pointMeshes['D_core'].visible = false;
+            if (pointMeshes['D_ring']) pointMeshes['D_ring'].visible = false;
+            if (pointMeshes['D_light']) pointMeshes['D_light'].visible = false;
+            if (pointMeshes['D_projOxy']) pointMeshes['D_projOxy'].visible = false;
+            if (pointMeshes['D_projOz']) pointMeshes['D_projOz'].visible = false;
+            if (labelElements['D']) labelElements['D'].style.display = 'none';
+
+            // 3. Ẩn và khóa lại nút Hiện vectơ AC, CD
+            if (window.vectorGroup) window.vectorGroup.visible = false;
+            const btnVectors = document.getElementById('btn-show-vectors');
+            btnVectors.disabled = true;
+            btnVectors.classList.remove('bg-blue-700', 'animate-pulse', 'shadow-[0_0_15px_rgba(59,130,246,0.8)]');
+            btnVectors.classList.add('bg-blue-500');
+
+            // 4. Dừng hoạt ảnh bay/thả hàng và âm thanh trực thăng
+            animationState.isPlaying = false;
+            animationState.progress = 0;
+            animationState.isDropping = false;
+            animationState.hasDropped = false;
+            animationState.cargoBlinkTime = 0;
+            animationState.dropIndex = 0;
+            animationState.lastDropTime = 0;
+            stopHelicopterSound(true);
+
+            // 5. Đưa trực thăng trở về bãi đậu tại C
+            planeGroup.position.copy(posC);
+            planeGroup.rotation.set(0, -Math.PI / 4, 0);
+            planeGroup.visible = window.modelsVisible !== false;
+
+            // 6. Ẩn các gói quà và nhãn chúc mừng
+            if (window.reliefPackage) {
+                window.reliefPackage.visible = false;
+                window.reliefPackage.children.forEach(pkg => {
+                    pkg.visible = false;
+                    pkg.position.set(pkg.userData.targetX, pkg.userData.targetY, pkg.userData.targetZ);
+                    pkg.rotation.set(0, 0, 0);
+                    pkg.children.forEach(child => {
+                        if (child.userData.isHeart && child.material && child.material.emissive) {
+                            child.material.emissive.setHex(0x000000);
+                            child.material.emissiveIntensity = 0;
+                        }
+                    });
+                });
+            }
+            if (window.successLabel) window.successLabel.style.display = 'none';
+
+            // 7. Khóa và đặt lại nút Thả hàng về trạng thái ban đầu
+            const btnDrop = document.getElementById('btn-drop-cargo');
+            btnDrop.disabled = true;
+            btnDrop.innerText = "🚁 THẢ HÀNG";
+            btnDrop.className = "bg-yellow-400 hover:bg-yellow-500 text-slate-900 text-[11px] font-bold py-1.5 px-2 rounded transition shadow disabled:opacity-50 disabled:cursor-not-allowed";
+
+            // Đưa con trỏ vào ô nhập đầu tiên để học sinh điền ngay
+            const firstInput = document.getElementById('ans-a1');
+            if (firstInput) firstInput.focus();
+        });
+
+        function updateLabels() {
+            const canvasBounds = renderer.domElement.getBoundingClientRect();
+            pointData.forEach(pt => {
+                const id = pt.id, element = labelElements[id];
+                if (element && element.style.display !== 'none') {
+                    const pos = id === 'D' ? posD.clone() : (pointMeshes[id + "_core"] ? pointMeshes[id + "_core"].position.clone() : mathToThree(pt.coords[0], pt.coords[1], pt.coords[2])); pos.project(camera);
+                    if (pos.z < 1) { 
+                        const x = (pos.x * 0.5 + 0.5) * canvasBounds.width, y = (-(pos.y * 0.5) + 0.5) * canvasBounds.height;
+                        element.style.left = `${x}px`; element.style.top = `${y}px`; element.style.opacity = 1;
+                    } else { element.style.opacity = 0; }
+                }
+            });
+            if (window.axisLabelElements) {
+                window.axisLabelElements.forEach(item => {
+                    const pos = item.pos.clone(); pos.project(camera);
+                    if (pos.z < 1) { 
+                        const x = (pos.x * 0.5 + 0.5) * canvasBounds.width, y = (-(pos.y * 0.5) + 0.5) * canvasBounds.height;
+                        item.el.style.left = `${x}px`; item.el.style.top = `${y}px`; item.el.style.opacity = 1;
+                    } else { item.el.style.opacity = 0; }
+                });
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const timeNow = Date.now();
+            
+            // Mưa
+            const positions = rainSystem.geometry.attributes.position.array;
+            for(let i=0; i<rainCount; i++) {
+                rainVelocityArray[i] -= 0.01 + Math.random() * 0.02;
+                positions[i*6] -= 0.01; positions[i*6+1] += rainVelocityArray[i]; positions[i*6+3] -= 0.01; positions[i*6+4] += rainVelocityArray[i]; 
+                if (positions[i*6+1] < 0) {
+                    positions[i*6] = Math.random() * 100 - 50; positions[i*6+1] = 80;
+                    positions[i*6+3] = positions[i*6] + 0.5; positions[i*6+4] = 80 - 2.0; rainVelocityArray[i] = 0;
+                }
+            }
+            rainSystem.geometry.attributes.position.needsUpdate = true;
+
+            // Sấm sét
+            if (window.lightningBolts && window.modelsVisible !== false) {
+                window.lightningBolts.forEach(bolt => {
+                    if (Math.random() > 0.90) { 
+                        bolt.visible = true; 
+                        bolt.position.x = bolt.userData.baseX + (Math.random() - 0.5) * 1.5; 
+                        bolt.position.z = bolt.userData.baseZ + (Math.random() - 0.5) * 1.5; 
+                    } else { bolt.visible = false; }
+                });
+            }
+
+            // Trực thăng quay cánh quạt
+            scene.traverse(function(object) { if (object.name === "mainRotor") object.rotation.y -= 0.6; });
+
+            // Nhấp nháy A, B, C, D
+            if (window.blinkingMarkers) {
+                const blinkIntensity = (Math.sin(timeNow * 0.005) + 1) / 2; 
+                window.blinkingMarkers.forEach(marker => {
+                    if (marker.ring) { marker.ring.material.opacity = 0.2 + blinkIntensity * 0.8; const scale = 1 + blinkIntensity * 0.25; marker.ring.scale.set(scale, scale, scale); }
+                    if (marker.light) marker.light.intensity = 0.5 + blinkIntensity * 2.5;
+                });
+            }
+
+            // Hoạt ảnh trực thăng bay
+            if (animationState.isPlaying) {
+                animationState.progress += animationState.speed;
+                const startPos = pointMeshes['C_core'] ? pointMeshes['C_core'].position.clone() : mathToThree(4, 4, 7);
+                const endPos = posD.clone();
+                if (animationState.progress <= 1) { 
+                    planeGroup.position.lerpVectors(startPos, endPos, animationState.progress); planeGroup.lookAt(endPos); 
+                } else {
+                    animationState.isPlaying = false; 
+                    animationState.isDropping = true; 
+                    
+                    window.reliefPackage.position.set(planeGroup.position.x, 0, planeGroup.position.z);
+                    window.reliefPackage.rotation.set(0, 0, 0);
+                    window.reliefPackage.visible = window.modelsVisible !== false;
+                    
+                    animationState.dropIndex = 0;
+                    animationState.lastDropTime = Date.now();
+                    
+                    window.reliefPackage.children.forEach(pkg => {
+                        pkg.visible = false;
+                        pkg.position.set(0, planeGroup.position.y / 1.2, 0); 
+                        pkg.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+                    });
+                    
+                    if (typeof stopHelicopterSound === 'function') stopHelicopterSound();
+                }
+            }
+
+            // Hoạt ảnh rơi hàng
+            if (animationState.isDropping && window.reliefPackage) {
+                const now = Date.now();
+                if (now - animationState.lastDropTime > 150 && animationState.dropIndex < window.reliefPackage.children.length) {
+                    window.reliefPackage.children[animationState.dropIndex].visible = window.modelsVisible !== false;
+                    animationState.dropIndex++;
+                    animationState.lastDropTime = now;
+                }
+
+                let allLanded = true;
+                window.reliefPackage.children.forEach(pkg => {
+                    if (pkg.visible) {
+                        if (pkg.position.y > pkg.userData.targetY) {
+                            pkg.position.y -= 0.25; 
+                            pkg.position.x += (pkg.userData.targetX - pkg.position.x) * 0.1;
+                            pkg.position.z += (pkg.userData.targetZ - pkg.position.z) * 0.1;
+                            pkg.rotation.y += 0.1;
+                            pkg.rotation.x += 0.1;
+                            allLanded = false;
+                            
+                            if (pkg.position.y <= pkg.userData.targetY) {
+                                pkg.position.set(pkg.userData.targetX, pkg.userData.targetY, pkg.userData.targetZ);
+                                pkg.rotation.set(0, 0, 0); 
+                            }
+                        }
+                    } else {
+                        allLanded = false; 
+                    }
+                });
+
+                if (allLanded && animationState.dropIndex >= window.reliefPackage.children.length) {
+                    animationState.isDropping = false; 
+                    animationState.hasDropped = true; 
+                    animationState.cargoBlinkTime = Date.now();
+                    const btn = document.getElementById('btn-drop-cargo');
+                    if (btn) { btn.innerText = "✅ ĐÃ GIAO HÀNG"; btn.classList.replace('bg-gray-400', 'bg-blue-600'); btn.classList.add('cursor-default'); }
+                    if (window.successLabel && window.modelsVisible !== false) window.successLabel.style.display = 'block';
+                }
+            }
+
+            // Hàng rớt xong -> Phát sáng nhấp nháy liên tục
+            if (animationState.hasDropped && window.reliefPackage) {
+                const timeElapsed = timeNow - animationState.cargoBlinkTime;
+                const glowIntensity = (Math.sin(timeElapsed * 0.005) + 1) / 2; 
+                window.reliefPackage.children.forEach(pkg => {
+                    pkg.children.forEach(child => {
+                        if (child.userData.isHeart && child.material && child.material.emissive) {
+                            child.material.emissive.setHex(0xff1493);
+                            child.material.emissiveIntensity = glowIntensity * 0.8;
+                        }
+                    });
+                });
+                
+                if (window.successLabel && window.successLabel.style.display === 'block') {
+                    const canvasBounds = renderer.domElement.getBoundingClientRect(); const labelPos = window.reliefPackage.position.clone();
+                    labelPos.y += 1.5; labelPos.project(camera);
+                    if (labelPos.z < 1) { 
+                        const x = (labelPos.x * 0.5 + 0.5) * canvasBounds.width, y = (-(labelPos.y * 0.5) + 0.5) * canvasBounds.height;
+                        window.successLabel.style.left = `${x}px`; window.successLabel.style.top = `${y}px`;
+                    }
+                }
+            }
+
+            controls.update(); renderer.render(scene, camera); updateLabels();
+        }
+
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+
+        animate();
+    </script>
+</body>
+</html>
